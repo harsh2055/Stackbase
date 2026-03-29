@@ -1,0 +1,208 @@
+// Stackbase Phase 4 — Prisma Schema
+// Adds: Deployment, DeploymentLog models
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  // DATABASE_URL = Supabase Transaction Pooler (port 5432 or 6543)
+  // MUST include: ?pgbouncer=true&sslmode=require&connection_limit=1
+  url       = env("DATABASE_URL")
+  // DIRECT_URL = Supabase direct connection (port 5432, no pgbouncer)
+  // Used only by prisma migrate — NOT for runtime queries
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  name         String?
+  role         String    @default("developer")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  projects     Project[]
+  apiKeys      ApiKey[]
+  aiRequests   AiRequest[]
+  @@map("users")
+}
+
+model Project {
+  id            String        @id @default(uuid())
+  name          String
+  description   String?
+  userId        String        @map("user_id")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  apiKeys       ApiKey[]
+  tables        ProjectTable[]
+  relationships ProjectRelationship[]
+  deployments   Deployment[]
+  aiRequests    AiRequest[]
+  functions     Function[]
+  @@map("projects")
+}
+
+model ApiKey {
+  id        String    @id @default(uuid())
+  projectId String    @map("project_id")
+  userId    String    @map("user_id")
+  key       String    @unique
+  name      String    @default("Default Key")
+  lastUsed  DateTime? @map("last_used")
+  createdAt DateTime  @default(now()) @map("created_at")
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@map("api_keys")
+}
+
+model ProjectTable {
+  id        String   @id @default(uuid())
+  projectId String   @map("project_id")
+  tableName String   @map("table_name")
+  columns   Json
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  @@unique([projectId, tableName])
+  @@map("project_tables")
+}
+
+model ProjectRelationship {
+  id         String   @id @default(uuid())
+  projectId  String   @map("project_id")
+  fromTable  String   @map("from_table")
+  fromColumn String   @map("from_column")
+  toTable    String   @map("to_table")
+  toColumn   String   @map("to_column")
+  type       String   @default("many-to-one")
+  createdAt  DateTime @default(now()) @map("created_at")
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  @@map("project_relationships")
+}
+
+// ── NEW Phase 4 ───────────────────────────────────────────────────────────────
+
+model Deployment {
+  id            String           @id @default(uuid())
+  projectId     String           @map("project_id")
+  status        String           @default("pending")
+  // pending | building | running | failed | stopped
+  apiUrl        String?          @map("api_url")
+  containerId   String?          @map("container_id")
+  containerName String?          @map("container_name")
+  port          Int?
+  provider      String           @default("local") // local | render | railway
+  errorMessage  String?          @map("error_message")
+  deployedAt    DateTime?        @map("deployed_at")
+  stoppedAt     DateTime?        @map("stopped_at")
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+  project       Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  logs          DeploymentLog[]
+  @@map("deployments")
+}
+
+model DeploymentLog {
+  id           String     @id @default(uuid())
+  deploymentId String     @map("deployment_id")
+  level        String     @default("info")  // info | warn | error | success
+  message      String
+  timestamp    DateTime   @default(now())
+  deployment   Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+  @@map("deployment_logs")
+}
+
+// Legacy (kept for backward compat)
+model TableSchema {
+  id        String   @id @default(uuid())
+  tableName String   @unique @map("table_name")
+  columns   Json
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  @@map("table_schemas")
+}
+
+model TableRelationship {
+  id         String   @id @default(uuid())
+  fromTable  String   @map("from_table")
+  fromColumn String   @map("from_column")
+  toTable    String   @map("to_table")
+  toColumn   String   @map("to_column")
+  type       String   @default("many-to-one")
+  createdAt  DateTime @default(now()) @map("created_at")
+  @@map("table_relationships")
+}
+
+// ── Phase 5: AI Backend Generator ─────────────────────────────────────────────
+
+model AiRequest {
+  id              String   @id @default(uuid())
+  projectId       String   @map("project_id")
+  userId          String   @map("user_id")
+  prompt          String
+  generatedSchema Json?    @map("generated_schema")
+  status          String   @default("pending") // pending | completed | failed
+  errorMessage    String?  @map("error_message")
+  tablesCreated   Int      @default(0) @map("tables_created")
+  deployed        Boolean  @default(false)
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("ai_requests")
+}
+
+// ── Phase 7: Serverless Functions ─────────────────────────────────────────────
+
+model Function {
+  id          String         @id @default(uuid())
+  projectId   String         @map("project_id")
+  name        String
+  description String?
+  triggerType String         @map("trigger_type")
+  // onInsert | onUpdate | onDelete | http | schedule
+  tableName   String?        @map("table_name")
+  // table to watch (for onInsert/onUpdate/onDelete triggers)
+  httpPath    String?        @map("http_path")
+  // path for http trigger e.g. /my-function
+  schedule    String?
+  // cron expression for schedule trigger e.g. "*/5 * * * *"
+  code        String
+  // JavaScript source code
+  enabled     Boolean        @default(true)
+  timeout     Int            @default(5000)
+  // execution timeout in ms
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+
+  project     Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  logs        FunctionLog[]
+
+  @@unique([projectId, name])
+  @@map("functions")
+}
+
+model FunctionLog {
+  id          String   @id @default(uuid())
+  functionId  String   @map("function_id")
+  trigger     String
+  // what triggered this execution
+  status      String   @default("success")
+  // success | error | timeout
+  duration    Int?
+  // execution time in ms
+  output      String?
+  // console.log output
+  error       String?
+  // error message if failed
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  function    Function @relation(fields: [functionId], references: [id], onDelete: Cascade)
+
+  @@map("function_logs")
+}
