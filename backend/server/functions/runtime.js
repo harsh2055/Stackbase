@@ -68,13 +68,16 @@ const executeFunction = async (code, event, timeout = 5000) => {
   ${code}
 })(event).then(function(result) {
   __result__ = result;
+  __done__ = true;
 }).catch(function(err) {
   __error__ = err && err.message ? err.message : String(err);
+  __done__ = true;
 });
 `;
 
   sandbox.__result__ = undefined;
   sandbox.__error__  = undefined;
+  sandbox.__done__   = false; // ADD THIS
 
   try {
     const script = new vm.Script(wrappedCode, {
@@ -86,15 +89,15 @@ const executeFunction = async (code, event, timeout = 5000) => {
     script.runInContext(sandbox, { timeout });
 
     // Wait for async completion (up to timeout)
-    const deadline = startTime + timeout;
-    while (sandbox.__result__ === undefined && sandbox.__error__ === undefined) {
-      if (Date.now() > deadline) {
-        executionError = `Execution timed out after ${timeout}ms`;
-        break;
-      }
-      await new Promise((r) => setTimeout(r, 10));
+    // Wait for async completion (up to timeout)
+  const deadline = startTime + timeout;
+  while (!sandbox.__done__) {  // CHANGED THIS LINE
+    if (Date.now() > deadline) {
+      executionError = `Execution timed out after ${timeout}ms`;
+      break;
     }
-
+    await new Promise((r) => setTimeout(r, 10));
+  }
     if (sandbox.__error__) {
       executionError = sandbox.__error__;
     }
@@ -143,3 +146,4 @@ const validateCode = (code) => {
 };
 
 module.exports = { executeFunction, validateCode };
+
