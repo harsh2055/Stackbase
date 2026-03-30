@@ -43,7 +43,7 @@ export default function FunctionCard({ fn, projectId, onEdit, onDelete, onRefres
     try {
       const result = await functionApi.execute(projectId, fn.id, {
         _test: true,
-        data: { id: 'test-id', example: 'value' },
+        data: { id: 'test-id', updated_at: new Date().toISOString() },
       });
       setLastResult(result);
       onRefresh && onRefresh();
